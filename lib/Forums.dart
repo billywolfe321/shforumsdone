@@ -17,18 +17,26 @@ class _ForumsState extends State<Forums> with SingleTickerProviderStateMixin {
   List<Map<String, dynamic>> userForums = [];
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final DatabaseReference _databaseReference = FirebaseDatabase.instance.ref();
+  Map<String, bool> subjectFilters = {};
+  Map<String, String> subjectNames = {};
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     fetchForums();
+    fetchSubjectNames();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  void fetchSubjectNames() async {
+    DataSnapshot snapshot = await _databaseReference.child('Subjects').get();
+    if (snapshot.exists) {
+      Map<dynamic, dynamic> subjects = snapshot.value as Map<dynamic, dynamic>;
+      setState(() {
+        subjectNames = subjects.map((key, value) => MapEntry(key.toString(), value.toString()));
+        subjectFilters = subjects.map((key, value) => MapEntry(key.toString(), false));
+      });
+    }
   }
 
   void fetchForums() {
@@ -58,20 +66,79 @@ class _ForumsState extends State<Forums> with SingleTickerProviderStateMixin {
     });
   }
 
-  void deleteForum(String forumId) async {
-    await _databaseReference.child('Forums/$forumId').remove();
-    fetchForums();
+  List<Map<String, dynamic>> applySubjectFilters(List<Map<String, dynamic>> forums) {
+    Set<String> activeFilters = subjectFilters.entries
+        .where((entry) => entry.value)
+        .map((entry) => entry.key)
+        .toSet();
+    return activeFilters.isEmpty
+        ? forums
+        : forums.where((forum) => activeFilters.contains(forum['subject'])).toList();
+  }
+
+  void toggleSubjectFilter(String subjectId) {
+    setState(() {
+      subjectFilters[subjectId] = !subjectFilters[subjectId]!;
+      if (subjectFilters.values.every((v) => !v)) {
+        subjectFilters.updateAll((key, value) => false);
+      }
+    });
+  }
+
+  void toggleAllSubjects(bool enable) {
+    setState(() {
+      subjectFilters.updateAll((key, value) => enable);
+    });
+  }
+
+  void showFilterDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        List<Widget> filterWidgets = subjectNames.entries.map((entry) {
+          return CheckboxListTile(
+            title: Text(entry.value),
+            value: subjectFilters[entry.key],
+            onChanged: (bool? value) {
+              Navigator.pop(context);
+              toggleSubjectFilter(entry.key);
+            },
+          );
+        }).toList();
+
+        return AlertDialog(
+          title: Text('Filter by Subject'),
+          content: SingleChildScrollView(
+            child: Column(
+              children: filterWidgets,
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Close'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xffffffff),
-      drawer: OpenDrawer(), // Using the custom drawer
+      drawer: OpenDrawer(),
       appBar: AppBar(
         backgroundColor: Color(0xffad32fe),
         title: Text("Forums"),
         actions: [
+          IconButton(
+            icon: Icon(Icons.filter_list),
+            onPressed: showFilterDialog,
+          ),
           IconButton(
             icon: Icon(Icons.add),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => AddForum())),
@@ -97,8 +164,8 @@ class _ForumsState extends State<Forums> with SingleTickerProviderStateMixin {
             child: TabBarView(
               controller: _tabController,
               children: [
-                buildForumList(allForums, false),
-                buildForumList(userForums, true),
+                buildForumList(applySubjectFilters(allForums), false),
+                buildForumList(applySubjectFilters(userForums), true),
               ],
             ),
           ),
@@ -114,7 +181,7 @@ class _ForumsState extends State<Forums> with SingleTickerProviderStateMixin {
         final forum = forums[index];
         return ListTile(
           title: Text(forum["title"] ?? 'No Title'),
-          subtitle: Text(forum["content"] ?? 'No Content'),
+          subtitle: Text("${forum["content"] ?? 'No Content'} - ${forum['subject']}"),
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => OpenForum(forumId: forum['forumId'])),
@@ -138,6 +205,11 @@ class _ForumsState extends State<Forums> with SingleTickerProviderStateMixin {
         );
       },
     );
+  }
+
+  void deleteForum(String forumId) async {
+    await _databaseReference.child('Forums/$forumId').remove();
+    fetchForums();
   }
 
   void confirmDelete(BuildContext context, String forumId) {
