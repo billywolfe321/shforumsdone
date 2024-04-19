@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'GroupChatPage.dart'; // Assuming this page handles the group chat interface
-import 'OpenDrawer.dart'; // Ensure this is the correct import for your custom drawer
-import 'AddGroupChat.dart'; // Dummy page for adding a group chat
+import 'GroupChatPage.dart';
+import 'OpenDrawer.dart';
+import 'AddGroupChat.dart';
 
 class JoinGroupChat extends StatefulWidget {
   @override
@@ -32,7 +32,7 @@ class _JoinGroupChatState extends State<JoinGroupChat> with SingleTickerProvider
   }
 
   void fetchGroupChats() {
-    final currentUser = _auth.currentUser?.uid ?? ""; // Add null check here
+    final currentUser = _auth.currentUser?.uid ?? "";
     _databaseReference.child('GroupChats').onValue.listen((event) {
       var loadedMyChats = <Map<String, dynamic>>[];
       var loadedAllChats = <Map<String, dynamic>>[];
@@ -40,11 +40,11 @@ class _JoinGroupChatState extends State<JoinGroupChat> with SingleTickerProvider
 
       event.snapshot.children.forEach((DataSnapshot snapshot) {
         Map<String, dynamic> chat = Map<String, dynamic>.from(snapshot.value as Map);
-        String chatId = snapshot.key ?? ""; // Ensure chatId is never null
+        chat['id'] = snapshot.key ?? "";
         bool isPrivate = chat['isPrivate'] ?? false;
-        String adminId = chat['adminID'] ?? ""; // Ensure adminId is never null
+        bool isAdmin = chat['adminID'] == currentUser;
 
-        if (chat['memberIDs'] != null && chat['memberIDs'][currentUser] == true) {
+        if (chat['memberIDs'] != null && chat['memberIDs'].containsKey(currentUser)) {
           loadedMyChats.add(chat);
         }
 
@@ -52,7 +52,7 @@ class _JoinGroupChatState extends State<JoinGroupChat> with SingleTickerProvider
           loadedAllChats.add(chat);
         }
 
-        if (isPrivate && (chat['memberIDs'][currentUser] == true || adminId == currentUser)) {
+        if (isPrivate && (chat['memberIDs'].containsKey(currentUser) || isAdmin)) {
           loadedPrivateChats.add(chat);
         }
       });
@@ -65,55 +65,21 @@ class _JoinGroupChatState extends State<JoinGroupChat> with SingleTickerProvider
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      drawer: OpenDrawer(), // Custom drawer for navigation
-      appBar: AppBar(
-        title: Text("Join Group Chat"),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: [
-            Tab(text: "My Chats"),
-            Tab(text: "All Chats"),
-            Tab(text: "Private Chats"),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.add),
-            onPressed: () {
-              Navigator.push(context, MaterialPageRoute(builder: (context) => AddGroupChat()));
-            },
-          )
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          buildChatList(myChats),
-          buildChatList(allChats),
-          buildChatList(privateChats),
-        ],
-      ),
-    );
-  }
-
-  Widget buildChatList(List<Map<String, dynamic>> chats) {
+  Widget buildChatList(List<Map<String, dynamic>> chats, bool isMyChatList) {
     return ListView.builder(
       itemCount: chats.length,
       itemBuilder: (context, index) {
         final chat = chats[index];
         bool joined = chat['memberIDs'] != null && chat['memberIDs'][_auth.currentUser?.uid] == true;
         return ListTile(
-          title: Text(chat['title'] ?? "Untitled Chat"), // Null check for title
-          subtitle: Text('Admin: ${chat['adminID'] ?? "Unknown"}'), // Null check for adminId
+          title: Text(chat['title'] ?? "Untitled Chat"),
+          subtitle: Text('Owner ${chat['adminID'] ?? "Unknown"}'),
           trailing: ElevatedButton(
             onPressed: () {
-              if (joined) {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatPage(chatId: chat['id'] ?? "", isAdmin: chat['adminID'] == _auth.currentUser?.uid))); // Null check for chatId
+              if (joined || isMyChatList) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatPage(chatId: chat['id'] ?? "", isAdmin: chat['adminID'] == _auth.currentUser?.uid)));
               } else {
-                joinChat(chat['id'] ?? "", chat['isPrivate']); // Null check for chatId
+                joinChat(chat['id'] ?? "", chat['isPrivate']);
               }
             },
             child: Text(joined ? "Open Chat" : "Join"),
@@ -127,10 +93,41 @@ class _JoinGroupChatState extends State<JoinGroupChat> with SingleTickerProvider
     if (!isPrivate) {
       await _databaseReference.child('GroupChats/$chatId/memberIDs/${_auth.currentUser!.uid}').set(true);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Joined the chat!")));
-      setState(() {});
+      fetchGroupChats();
     } else {
-      // Send join request for private chats
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Request sent to join private chat.")));
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      drawer: OpenDrawer(),
+      appBar: AppBar(
+        title: Text("Join Group Chat"),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(text: "My Chats"),
+            Tab(text: "All Chats"),
+            Tab(text: "Private Chats"),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.add),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => AddGroupChat())),
+          ),
+        ],
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          buildChatList(myChats, true),
+          buildChatList(allChats, false),
+          buildChatList(privateChats, false),
+        ],
+      ),
+    );
   }
 }
